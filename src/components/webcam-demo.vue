@@ -4,12 +4,15 @@
     <button class="ml-0" @click="toggleRecord">
       {{ recoding ? "停止摄像" : "开始摄像" }}
     </button>
-    <div class="grid grid-cols-2 gap-2">
+    <div class="grid grid-cols-3 gap-2">
       <video class="max-w-full" ref="videoPlayer" autoplay controls></video>
       <ul>
         <li>自动截图</li>
         <canvas id="snapshot"></canvas>
       </ul>
+      <div>
+        <h2>相似度: {{ scoreRef }}</h2>
+      </div>
     </div>
   </div>
 </template>
@@ -39,7 +42,7 @@ function drawCanvas(canvas, img) {
     );
 }
 
-function CreateAudioRecord(MediaElement) {
+function CreateAudioRecord(MediaElement, scoreRef) {
   let stream;
   let recorder;
   let recorded;
@@ -49,22 +52,69 @@ function CreateAudioRecord(MediaElement) {
     const capturer = new ImageCapture(videoTrack);
     let intervalId = 0;
 
-    return {
-      start() {
-        setInterval(() => {
-          if (intervalId !== -1) {
-            capturer
-              .grabFrame()
-              .then((imageBitMap) =>
-                drawCanvas(document.getElementById("snapshot"), imageBitMap)
-              );
+    const compareService = {
+      imageQueue: [],
+      push(dataUrl) {
+        this.imageQueue.unshift(dataUrl);
+        if (this.imageQueue.length > 2) {
+          this.imageQueue.pop();
+        }
+      },
+      async compare() {
+        // we only compare the latest two images
+        if (this.imageQueue.length !== 2) {
+          return;
+        }
+
+        const response = await fetch("http://192.168.101.203:8010/facediff", {
+          method: "POST",
+          mode: "cors",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            params: this.imageQueue.map((base64Image) => ({
+              image: base64Image.substring(22), // remove "data:image/png;base64," at beginning
+              image_type: "BASE64",
+              face_type: "LIVE",
+            })),
+          }),
+        });
+
+        return (await response.json()).score;
+      },
+    };
+
+    function start() {
+      setTimeout(async () => {
+        if (intervalId !== -1) {
+          /**@type {HTMLCanvasElement} */
+          const canvas = document.getElementById("snapshot");
+          // draw on canvas
+          const imageBitMap = await capturer.grabFrame();
+          drawCanvas(canvas, imageBitMap);
+          // generate dataUrl
+          compareService.push(canvas.toDataURL("image/png", 1));
+          // Using API to get difference
+          const score = await compareService.compare();
+
+          if (score) {
+            scoreRef.value = score;
           }
-        }, 3000);
-      },
-      destroy() {
-        clearInterval(intervalId);
-        intervalId = -1;
-      },
+          // loop
+          start();
+        }
+      }, 3000);
+    }
+
+    function destroy() {
+      clearTimeout(intervalId);
+      intervalId = -1;
+    }
+
+    return {
+      start,
+      destroy,
     };
   }
 
@@ -115,6 +165,7 @@ function CreateAudioRecord(MediaElement) {
 export default {
   setup() {
     const videoPlayer = ref(null);
+    const scoreRef = ref(0);
 
     const data = reactive({
       recoding: false,
@@ -122,7 +173,7 @@ export default {
 
     let Record;
 
-    onMounted(() => (Record = CreateAudioRecord(videoPlayer.value)));
+    onMounted(() => (Record = CreateAudioRecord(videoPlayer.value, scoreRef)));
 
     onUnmounted(() => Record.destroy());
 
@@ -130,6 +181,7 @@ export default {
 
     return {
       ...toRefs(data),
+      scoreRef,
       videoPlayer,
       toggleRecord: () => {
         if (data.recoding) {
