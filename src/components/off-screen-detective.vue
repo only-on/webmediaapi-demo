@@ -8,12 +8,14 @@
 </template>
 
 <script>
-import { ref, onBeforeUnmount } from "vue";
+import { ref, onBeforeUnmount, onMounted } from "vue";
 
 function OffScreenDetective() {
   const popUpService = {
     event: undefined,
+    recorded: [],
     push(event) {
+      this.recorded.push(event);
       this.event = event;
       clearTimeout(this.timer);
       this.timer = this.nextTick();
@@ -45,6 +47,7 @@ function OffScreenDetective() {
   }
 
   return {
+    recorded: popUpService.recorded,
     on() {
       document.addEventListener(
         "visibilitychange",
@@ -68,12 +71,23 @@ export default {
     const detecting = ref(false);
 
     const OffScreenDetectiveService = OffScreenDetective();
-
-    onBeforeUnmount(() => OffScreenDetectiveService.off());
-
+    const beforeunloadHandle = (e) => {
+        var confirmationMessage = "要记得保存！你确定要离开我吗？";
+        (e || window.event).returnValue = confirmationMessage; // 兼容 Gecko + IE
+        console.log(confirmationMessage)
+        return confirmationMessage; // 兼
+    }
+    onBeforeUnmount(() =>{
+       OffScreenDetectiveService.off()
+       window.addEventListener("beforeunload", beforeunloadHandle);
+    });
+    onMounted(()=>{
+        window.addEventListener("beforeunload", beforeunloadHandle);
+    })
     return {
       detecting,
       toggleDeteictive() {
+        console.log(OffScreenDetectiveService.recorded)
         if (detecting.value) {
           detecting.value = false;
           OffScreenDetectiveService.off();
